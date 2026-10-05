@@ -97,11 +97,6 @@ func (m *Manager) RecordQuotaResetScheduleIfUnchanged(ctx context.Context, expec
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	release, err := m.lockAuthMutationContext(ctx, expected.ID)
-	if err != nil {
-		return nil
-	}
-	defer release()
 	m.mu.Lock()
 	current := m.auths[expected.ID]
 	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
@@ -116,7 +111,6 @@ func (m *Manager) RecordQuotaResetScheduleIfUnchanged(ctx context.Context, expec
 	updated.Generation++
 	updated.UpdatedAt = schedule.ObservedAt
 	m.auths[updated.ID] = updated
-	m.notifyAuthChangeLocked(updated.ID)
 	snapshot := updated.Clone()
 	m.mu.Unlock()
 	if m.scheduler != nil {
