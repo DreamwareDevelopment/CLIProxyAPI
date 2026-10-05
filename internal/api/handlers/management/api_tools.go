@@ -230,8 +230,18 @@ func (h *Handler) apiCall(c *gin.Context, recoverQuota bool) {
 	httpClient := &http.Client{
 		Timeout: defaultAPICallTimeout,
 	}
-	if recoverySnapshot != nil {
+
+	httpClient.Transport = h.apiCallTransport(auth, requestProxyURL)
+	var routingSnapshot *coreauth.Auth
+	if h.authManager != nil && auth != nil {
+		if current, ok := h.authManager.GetByID(auth.ID); ok && routingUsageRequestMatches(req, current) {
+			routingSnapshot = current
+		}
+	}
+	routingRedirected := false
+	if routingSnapshot != nil || recoverySnapshot != nil {
 		httpClient.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
+			routingRedirected = true
 			redirected = true
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
@@ -239,7 +249,6 @@ func (h *Handler) apiCall(c *gin.Context, recoverQuota bool) {
 			return nil
 		}
 	}
-	httpClient.Transport = h.apiCallTransport(auth, requestProxyURL)
 
 	resp, errDo := httpClient.Do(req)
 	if errDo != nil {
@@ -260,8 +269,15 @@ func (h *Handler) apiCall(c *gin.Context, recoverQuota bool) {
 	}
 
 	if recoverySnapshot != nil && !redirected && resp.StatusCode == http.StatusOK && quotaUsageHasCapacity(recoverySnapshot.Provider, respBody, recoverySnapshot) {
-		if _, _, errReset := h.authManager.ResetQuotaIfUnchanged(c.Request.Context(), recoverySnapshot); errReset != nil {
+		if recovered, _, errReset := h.authManager.ResetQuotaIfUnchanged(c.Request.Context(), recoverySnapshot); errReset != nil {
 			log.WithError(errReset).Debug("management usage refresh quota recovery failed")
+		} else if recovered != nil {
+			routingSnapshot = recovered
+		}
+	}
+	if routingSnapshot != nil && !routingRedirected && resp.StatusCode == http.StatusOK {
+		if schedule, ok := routingUsageSchedule(routingSnapshot.Provider, respBody, time.Now()); ok {
+			h.authManager.RecordQuotaResetScheduleIfUnchanged(c.Request.Context(), routingSnapshot, schedule)
 		}
 	}
 
