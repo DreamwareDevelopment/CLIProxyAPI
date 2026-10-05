@@ -284,3 +284,14 @@ func ValidDeviceID(value string) bool {
 	decoded, errDecode := hex.DecodeString(value)
 	return errDecode == nil && len(decoded) == claudeDeviceIDByteSize
 }
+
+// ReadMetadataBool reads a boolean-valued entry under the metadata lock.
+func ReadMetadataBool(metadata *map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	claudeDevicePoolMu.Lock()
+	defer claudeDevicePoolMu.Unlock()
+	value, _ := (*metadata)[key].(bool)
+	return value
+}
