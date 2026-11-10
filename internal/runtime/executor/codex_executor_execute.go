@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpaspend"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -172,7 +173,10 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	}
 	if !useSIWC {
 		normalizeCodexInstructionsDoc(doc, helps.IsNativeCodexRequest(req.Payload, opts))
-		if !isCompactionSummary && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) {
+		// SEC-2505 (MR355): a governed request never gets the injected charged
+		// tool, and the spend gate still judges the final bytes. Ungoverned
+		// traffic keeps the configured injection.
+		if !isCompactionSummary && (e.cfg == nil || e.cfg.DisableImageGeneration == config.DisableImageGenerationOff) && !cpaspend.Governed(ctx) {
 			checkModel := req.Model
 			if strings.TrimSpace(checkModel) == "" {
 				checkModel = baseModel

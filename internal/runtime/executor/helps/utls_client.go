@@ -15,6 +15,7 @@ import (
 	tls "github.com/refraction-networking/utls"
 	internalcache "github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpaspend"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/httpwire"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/httptransport"
@@ -544,13 +545,13 @@ func NewUtlsHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyau
 	}
 
 	client := &http.Client{
-		Transport: &fallbackRoundTripper{
+		Transport: cpaspend.WrapTransport(ctx, cpaspend.ConfigSnapshot(cfg), &fallbackRoundTripper{
 			anthropic:   anthropicRT,
 			anthropicFn: anthropicFn,
 			chrome:      chromeRT,
 			fallback:    standardTransport,
 			fallbackFn:  fallbackFn,
-		},
+		}),
 	}
 	if timeout > 0 {
 		client.Timeout = timeout

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpaspend"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -347,6 +348,13 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		errChan <- errMsg
 		close(errChan)
 		return nil, nil, errChan
+	}
+	if routeDecision.ExecutorPluginID != "" && cpaspend.Governed(ctx) {
+		dataChan, errChan := make(chan []byte), make(chan *interfaces.ErrorMessage, 1)
+		errChan <- executionErrorMessage(cpaspend.RefuseEntry(ctx, "route", "a plugin executor bypasses the gated conductor path"))
+		close(dataChan)
+		close(errChan)
+		return dataChan, nil, errChan
 	}
 	if routeDecision.ExecutorPluginID != "" {
 		return h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)

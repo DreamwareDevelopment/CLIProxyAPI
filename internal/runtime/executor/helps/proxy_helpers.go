@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpaspend"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/httptransport"
@@ -35,6 +36,14 @@ import (
 //   - *http.Client: An HTTP client with configured proxy or transport
 func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) (clientOut *http.Client) {
 	defer func() { clientOut = httptransport.Decorate(ctx, clientOut) }()
+	httpClient := newProxyAwareHTTPClient(ctx, cfg, auth, timeout)
+	// A governed request's sends pass the spending gate; ungoverned clients are unchanged.
+	// The gate sits under any context decorator, so it judges the bytes the decorator produced.
+	httpClient.Transport = cpaspend.WrapTransport(ctx, cpaspend.ConfigSnapshot(cfg), httpClient.Transport)
+	return httpClient
+}
+
+func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
 	httpClient := &http.Client{}
 	if timeout > 0 {
 		httpClient.Timeout = timeout

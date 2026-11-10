@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpaspend"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"net"
 	"net/http"
@@ -174,6 +175,11 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	engine.Use(logging.GinLogrusLogger())
 	engine.Use(logging.CPATraceIDMiddleware())
 	engine.Use(cpatelemetry.Middleware())
+	cpaspend.SetRefusalAuthenticator(func(r *http.Request) bool {
+		_, errAuth := accessManager.Authenticate(r.Context(), r)
+		return errAuth == nil
+	})
+	engine.Use(cpaspend.Middleware())
 	engine.Use(s.maxRequestBodyBytesMiddleware())
 
 	// Add request logging middleware before recovery and extra middleware so that
