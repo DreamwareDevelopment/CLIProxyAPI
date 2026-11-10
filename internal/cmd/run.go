@@ -12,6 +12,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
@@ -31,6 +32,11 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 
 // StartServiceWithPluginHost builds and runs the proxy service with a shared plugin host.
 func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) {
+	// Telemetry is scoped to an actual service run, so login and other
+	// command-line paths never start an exporter they have no use for.
+	stopTelemetry := cpatelemetry.Start()
+	defer stopTelemetry()
+
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
@@ -75,6 +81,8 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 
 // StartServiceBackgroundWithPluginHost starts the proxy service with a shared plugin host.
 func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) (cancel func(), done <-chan struct{}) {
+	stopTelemetry := cpatelemetry.Start()
+
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
@@ -92,12 +100,16 @@ func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string,
 	service, err := builder.Build()
 	if err != nil {
 		log.Errorf("failed to build proxy service: %v", err)
+		stopTelemetry()
 		close(doneCh)
 		return cancelFn, doneCh
 	}
 
 	go func() {
 		defer close(doneCh)
+		// Defers run last-registered-first, so this one runs BEFORE close(doneCh):
+		// anything waiting on done is then guaranteed a flushed exporter.
+		defer stopTelemetry()
 		if err := service.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Errorf("proxy service exited with error: %v", err)
 		}

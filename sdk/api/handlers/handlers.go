@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"net"
 	"net/http"
 	"reflect"
@@ -643,6 +644,7 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 			parentCtx = logging.WithRequestID(parentCtx, requestID)
 		}
 	}
+	parentCtx = cpatelemetry.TransferContext(parentCtx, requestCtx)
 	newCtx, cancel := context.WithCancel(parentCtx)
 
 	endpoint := ""
@@ -692,6 +694,11 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	newCtx = coreauth.WithCodexClientRequest(newCtx, coreauth.IsCodexClientRequest(newCtx))
 	newCtx = context.WithValue(newCtx, "handler", handler)
 	return newCtx, func(params ...interface{}) {
+		if len(params) == 1 {
+			if err, ok := params[0].(error); ok {
+				cpatelemetry.ObserveError(cancelCtx, err)
+			}
+		}
 		if c != nil {
 			logging.SetResponseStatus(cancelCtx, c.Writer.Status())
 		}

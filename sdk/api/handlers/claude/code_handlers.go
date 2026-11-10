@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"io"
 	"net/http"
 	"strconv"
@@ -89,6 +90,7 @@ func (h *ClaudeCodeAPIHandler) ClaudeMessages(c *gin.Context) {
 
 	// Check if the client requested a streaming response.
 	streamResult := ojson.GetBytesNoCopy(rawJSON, "stream")
+	cpatelemetry.ObserveRequest(c.Request.Context(), strings.Clone(ojson.GetBytesNoCopy(rawJSON, "model").String()), streamResult.Exists() && streamResult.Type != ojson.False)
 	if !streamResult.Exists() || streamResult.Type == ojson.False {
 		h.handleNonStreamingResponse(c, rawJSON)
 	} else {
@@ -126,13 +128,18 @@ func (h *ClaudeCodeAPIHandler) ClaudeCountTokens(c *gin.Context) {
 
 	modelName := strings.Clone(ojson.GetBytesNoCopy(rawJSON, "model").String())
 
+	cpatelemetry.ObserveRequest(cliCtx, modelName, false)
 	resp, upstreamHeaders, errMsg := h.ExecuteCountWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, alt)
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
 		return
 	}
+	if input := ojson.GetBytesNoCopy(resp, "input_tokens"); input.Type == ojson.Number {
+		cpatelemetry.ObserveCount(cliCtx, input.Int())
+	}
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+	cpatelemetry.ObserveResponseID(cliCtx, c.Writer.Header())
 	_, _ = c.Writer.Write(resp)
 	cliCancel()
 }
@@ -210,6 +217,7 @@ func (h *ClaudeCodeAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSO
 	}
 
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+	cpatelemetry.ObserveResponseID(cliCtx, c.Writer.Header())
 	_, _ = c.Writer.Write(resp)
 	cliCancel()
 }
@@ -255,6 +263,9 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 		}
 		setSSEHeaders()
 		handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+		// Read after the final header selection: exactly the identifier the
+		// client will see, or nothing. The header map is not modified.
+		cpatelemetry.ObserveResponseID(cliCtx, c.Writer.Header())
 		committed = true
 	}
 	writeKeepAlive := func() bool {
@@ -340,8 +351,13 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 				streamState.loggedTerminalError = true
 			}
 			if len(chunk) > 0 {
-				_, _ = c.Writer.Write(chunk)
+				kind, meaningful := cpatelemetry.ClassifyStreamContent(chunk)
+				written, errWrite := c.Writer.Write(chunk)
+				if meaningful {
+					cpatelemetry.ObserveForward(cliCtx, kind, written, errWrite != nil)
+				}
 				flusher.Flush()
+				cpatelemetry.ObserveFlush(cliCtx)
 			}
 
 			// Continue streaming the rest
@@ -501,7 +517,12 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flus
 				h.LoggingAPIResponseError(c, state.policyRefusalErr)
 				state.loggedTerminalError = true
 			}
-			_, _ = c.Writer.Write(chunk)
+			kind, meaningful := cpatelemetry.ClassifyStreamContent(chunk)
+			written, errWrite := c.Writer.Write(chunk)
+			if meaningful {
+				// A failed or empty write forwarded nothing, so it marks nothing.
+				cpatelemetry.ObserveForward(c.Request.Context(), kind, written, errWrite != nil)
+			}
 		},
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
 			state.FlushPendingLine()
@@ -630,6 +651,9 @@ func (h *ClaudeCodeAPIHandler) WriteErrorResponse(c *gin.Context, msg *interface
 		appendClaudeAPIResponse(c, body)
 		if !c.Writer.Written() && c.Writer.Header().Get("Content-Type") == "" {
 			c.Writer.Header().Set("Content-Type", "application/json")
+		}
+		if c.Request != nil {
+			cpatelemetry.ObserveResponseID(c.Request.Context(), c.Writer.Header())
 		}
 		c.Status(status)
 		_, _ = c.Writer.Write(body)

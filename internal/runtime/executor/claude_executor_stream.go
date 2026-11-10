@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"io"
 	"net/http"
 	"strings"
@@ -301,13 +302,16 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, err := doClaudeUpstreamRequest(httpClient, httpReq)
+	httpResp, attemptCtx, err := doClaudeUpstreamRequest(httpClient, httpReq, req.Model, true)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, wrapClaudeFastRequestError(fastRequest, 0, err)
 	}
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		// One close covers every return in this block; FinishAttempt is
+		// idempotent, so a later close on the same attempt is a no-op.
+		cpatelemetry.FinishAttempt(attemptCtx, cpatelemetry.OutcomeProviderError)
 		// Decompress error responses — pass the Content-Encoding value (may be empty)
 		// and let decodeResponseBody handle both header-declared and magic-byte-detected
 		// compression.  This keeps error-path behaviour consistent with the success path.
@@ -341,6 +345,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	}
 	decodedBody, err := decodeResponseBody(httpResp.Body, claudeResponseContentEncoding(httpResp.Header))
 	if err != nil {
+		cpatelemetry.FinishAttempt(attemptCtx, cpatelemetry.OutcomeForError(attemptCtx, err))
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		if errClose := httpResp.Body.Close(); errClose != nil {
 			log.Errorf("response body close error: %v", errClose)
@@ -349,7 +354,17 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	}
 	out := make(chan cliproxyexecutor.StreamChunk, 1)
 	go func() {
+		// The attempt ends when the stream is finished, not when its headers
+		// arrived, and it must be closed before the consumer can see the stream
+		// end. Defers run last-registered-first, so registering this one AFTER
+		// `close(out)` is what runs it BEFORE the channel closes: a reader that has
+		// drained the stream is then guaranteed the attempt span already exists.
+		// Registered the other way round, the two race and the span is sometimes
+		// missing for anyone who acts on end-of-stream.
+		attemptOutcome := cpatelemetry.OutcomeSuccess
+		firstContentSeen := false
 		defer close(out)
+		defer func() { cpatelemetry.FinishAttempt(attemptCtx, attemptOutcome) }()
 		defer func() {
 			if errClose := decodedBody.Close(); errClose != nil {
 				log.Errorf("response body close error: %v", errClose)
@@ -360,6 +375,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		emitCancellation := func(cause error) bool {
 			cancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
 			if cancelErr != nil {
+				attemptOutcome = cpatelemetry.OutcomeCanceled
 				helps.RecordAPIResponseError(ctx, e.cfg, cancelErr)
 				streamUsage.PublishFailure(ctx, reporter, cancelErr)
 				select {
@@ -373,6 +389,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				c = ctx.Err()
 			}
 			if errors.Is(c, context.Canceled) {
+				attemptOutcome = cpatelemetry.OutcomeCanceled
 				helps.RecordAPIResponseError(ctx, e.cfg, c)
 				streamUsage.PublishFailure(ctx, reporter, c)
 				return true
@@ -380,6 +397,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			return false
 		}
 		emitResponseError := func(errResponse error) {
+			attemptOutcome = cpatelemetry.OutcomeProviderError
 			errResponse = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errResponse)
 			helps.RecordAPIResponseError(ctx, e.cfg, errResponse)
 			streamUsage.PublishFailure(ctx, reporter, errResponse)
@@ -414,6 +432,12 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 			for scanner.Scan() {
 				line := scanner.Bytes()
+				if !firstContentSeen {
+					if kind, ok := cpatelemetry.ClassifyStreamContent(line); ok {
+						firstContentSeen = true
+						cpatelemetry.ObserveFirstContent(attemptCtx, kind)
+					}
+				}
 				helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 				reporter.ObserveResponseModel(line)
 				streamUsage.ObserveClaudeStream(line)
@@ -451,6 +475,11 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 					errScan = statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before message_stop"}
 				}
 				if errScan != nil {
+					// The attempt outcome is wire-level: an upstream error event or a
+					// missing message_stop on a 200 stream still completed the attempt.
+					if scanner.Err() != nil {
+						attemptOutcome = cpatelemetry.OutcomeProviderError
+					}
 					errScan = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errScan)
 					helps.RecordAPIResponseError(ctx, e.cfg, errScan)
 					streamUsage.PublishFailure(ctx, reporter, errScan)
@@ -479,6 +508,12 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		upstreamCompleted := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
+			if !firstContentSeen {
+				if kind, ok := cpatelemetry.ClassifyStreamContent(line); ok {
+					firstContentSeen = true
+					cpatelemetry.ObserveFirstContent(attemptCtx, kind)
+				}
+			}
 			eventBuf.Write(line)
 			eventBuf.WriteByte('\n')
 			if len(bytes.TrimSpace(line)) == 0 {
@@ -554,6 +589,11 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				errScan = statusErr{code: http.StatusBadGateway, msg: "upstream stream closed before message_stop"}
 			}
 			if errScan != nil {
+				// The attempt outcome is wire-level: an upstream error event or a
+				// missing message_stop on a 200 stream still completed the attempt.
+				if scanner.Err() != nil {
+					attemptOutcome = cpatelemetry.OutcomeProviderError
+				}
 				errScan = wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, errScan)
 				helps.RecordAPIResponseError(ctx, e.cfg, errScan)
 				streamUsage.PublishFailure(ctx, reporter, errScan)

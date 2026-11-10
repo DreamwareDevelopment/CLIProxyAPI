@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"io"
 	"net/http"
 	"strings"
@@ -19,7 +20,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ cliproxyexecutor.Response, err error) {
 	apiKey, baseURL := claudeCreds(auth)
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
@@ -298,7 +299,8 @@ func (e *ClaudeExecutor) countTokensUpstream(ctx context.Context, auth *cliproxy
 	})
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
-	resp, err := doClaudeUpstreamRequest(httpClient, httpReq)
+	resp, attemptCtx, err := doClaudeUpstreamRequest(httpClient, httpReq, req.Model, false)
+	defer func() { cpatelemetry.FinishAttempt(attemptCtx, cpatelemetry.OutcomeForError(attemptCtx, err)) }()
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return cliproxyexecutor.Response{}, err

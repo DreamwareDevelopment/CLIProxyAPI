@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"io"
 	"net/http"
 
@@ -307,7 +308,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, err := doClaudeUpstreamRequest(httpClient, httpReq)
+	httpResp, attemptCtx, err := doClaudeUpstreamRequest(httpClient, httpReq, req.Model, upstreamStream)
+	// A buffered response is complete when Execute returns, so the named error
+	// return is exactly this attempt's outcome.
+	defer func() { cpatelemetry.FinishAttempt(attemptCtx, cpatelemetry.OutcomeForError(attemptCtx, err)) }()
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, wrapClaudeFastRequestError(fastRequest, 0, err)

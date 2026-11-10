@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"golang.org/x/net/context"
 )
@@ -197,6 +198,9 @@ func (h *BaseAPIHandler) ForwardStream(c *gin.Context, flusher http.Flusher, can
 		if !flush() {
 			return true
 		}
+		// Invocation only: a flush says the bytes left this handler, never
+		// that the client received them.
+		cpatelemetry.ObserveFlush(c.Request.Context())
 		if opts.ChunkError != nil {
 			chunkErr := opts.ChunkError()
 			if chunkErr != nil {

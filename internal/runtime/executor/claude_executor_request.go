@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"io"
 	"net/http"
 	"net/url"
@@ -1654,10 +1655,26 @@ func applyClaudeHeadersWithNativeProfile(
 // call. Folding the wire-casing pass in here makes it structurally impossible
 // for one of the three request paths to drift away from the others, which is
 // exactly how the streaming and non-streaming beta sets diverged before.
-func doClaudeUpstreamRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+//
+// It is also where one actual wire attempt begins, which is why it returns the
+// attempt context: the attempt does not end when headers arrive, so the caller
+// owns closing it. The model and stream flag are supplied by the caller because
+// this boundary cannot infer them - an Anthropic request negotiates
+// Accept: application/json even when the response body is an SSE stream, so the
+// request headers are not a stream signal.
+func doClaudeUpstreamRequest(client *http.Client, req *http.Request, model string, stream bool) (*http.Response, context.Context, error) {
 	applyClaudeWireHeaderCasing(req)
 	cliproxyexecutor.MarkUpstreamAttempt(req.Context())
-	return client.Do(req)
+	attemptCtx, _ := cpatelemetry.BeginAttempt(req.Context(), "claude", model, stream)
+	resp, err := client.Do(req.WithContext(attemptCtx))
+	if err != nil {
+		// Nothing downstream can close an attempt that never produced a
+		// response, so this path closes its own.
+		cpatelemetry.FinishAttempt(attemptCtx, cpatelemetry.OutcomeForError(attemptCtx, err))
+		return resp, attemptCtx, err
+	}
+	cpatelemetry.ObserveHeaders(attemptCtx, resp.StatusCode)
+	return resp, attemptCtx, nil
 }
 
 // claudeWireHeaderCasing maps Go's canonical header name to the exact casing

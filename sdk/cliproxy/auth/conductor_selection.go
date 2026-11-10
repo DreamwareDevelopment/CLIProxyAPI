@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cpatelemetry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -1939,12 +1940,17 @@ func waitForCooldown(ctx context.Context, wait, maxWait time.Duration) error {
 	if wait <= 0 {
 		return nil
 	}
+	// Opened before the jitter is drawn and closed at the wake, so the span is
+	// the wait that actually happened rather than the wait that was requested.
+	done := cpatelemetry.BeginRetryWait(ctx, cpatelemetry.WaitCooldown)
 	timer := time.NewTimer(jitteredCooldownWait(wait, maxWait))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
+		done(true)
 		return ctx.Err()
 	case <-timer.C:
+		done(false)
 		return nil
 	}
 }
