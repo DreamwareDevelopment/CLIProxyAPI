@@ -408,6 +408,19 @@
       "tests": [
         "scripts.test_native_release.NativeReleaseTest.test_complete_checksum_inventory"
       ]
+    },
+    {
+      "id": "live_release_tag_binding",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "api(f\"repos/{REPO}/commits/{record['tag']}\")[\"sha\"] == binding[\"source_sha\"]",
+          "after": "True"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_live_release_tag_binding"
+      ]
     }
   ]
 }

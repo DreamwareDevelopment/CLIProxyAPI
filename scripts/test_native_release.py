@@ -173,7 +173,7 @@ class NativeReleaseTest(unittest.TestCase):
         self.assertEqual(native.archive_name("2.1.0", "amd64"), "CLIProxyAPI_2.1.0_darwin_amd64.tar.gz")
         self.assertEqual(native.archive_name("2.1.0", "arm64"), "CLIProxyAPI_2.1.0_darwin_aarch64.tar.gz")
 
-    def verification(self, scratch, *, original_wrong=False, native_author_wrong=False, raced=False):
+    def verification(self, scratch, *, original_wrong=False, native_author_wrong=False, raced=False, tag_moved=False):
         import hashlib
         def hashed(data):
             return "sha256:" + hashlib.sha256(data).hexdigest()
@@ -216,7 +216,8 @@ class NativeReleaseTest(unittest.TestCase):
             path.write_bytes(contents[name])
             return path
         args = SimpleNamespace(run=100,attempt=2,draft=7,output=Path(scratch)/"qualified",compare=None)
-        with patch.object(native,"producer",return_value=self.binding), patch.object(native,"clean_source",return_value="a"*40), patch.object(native,"api",side_effect=[self.draft,{"sha":"a"*40},after]), patch.object(native,"download_asset",side_effect=download_asset), patch.object(native,"download_artifact",side_effect=download_artifact), patch.object(native,"github_outputs"):
+        tag = {"sha": ("f" if tag_moved else "a") * 40}
+        with patch.object(native,"producer",return_value=self.binding), patch.object(native,"clean_source",return_value="a"*40), patch.object(native,"api",side_effect=[self.draft,tag,after,tag]), patch.object(native,"download_asset",side_effect=download_asset), patch.object(native,"download_artifact",side_effect=download_artifact), patch.object(native,"github_outputs"):
             native.verify(args)
         return args
 
@@ -241,6 +242,11 @@ class NativeReleaseTest(unittest.TestCase):
             lines = (args.output/"checksums.txt").read_text().splitlines()
             self.assertEqual(len(lines),10)
             self.assertEqual(len({line.split()[1] for line in lines}),10)
+
+    def test_live_release_tag_binding(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            with self.assertRaisesRegex(native.Refused, "release tag source changed"):
+                self.verification(scratch,tag_moved=True)
 
 
 if __name__ == "__main__":

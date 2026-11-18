@@ -174,6 +174,10 @@ def validate_draft(draft, binding):
     return record
 
 
+def verify_tag(binding, record):
+    require(api(f"repos/{REPO}/commits/{record['tag']}")["sha"] == binding["source_sha"], "release tag source changed")
+
+
 def native_runtime(go_binary):
     require(platform.system() == "Darwin" and platform.machine() in ("arm64", "x86_64"), "actual native Mac executor required")
     require(os.environ.get("DREAMWARE_TEST_ACTIVE") == "1", "run the entire native command through dreamware-test")
@@ -320,7 +324,7 @@ def verify(args):
     require(clean_source() == binding["source_sha"], "continuation source must equal current producer/default source")
     draft = api(f"repos/{REPO}/releases/{args.draft}")
     record = validate_draft(draft, binding)
-    require(api(f"repos/{REPO}/commits/{record['tag']}")["sha"] == binding["source_sha"], "release tag source changed")
+    verify_tag(binding, record)
     args.output.mkdir(parents=True, exist_ok=False)
     saved_assets = []
     for artifact in binding["artifacts"]:
@@ -349,6 +353,7 @@ def verify(args):
     final = api(f"repos/{REPO}/releases/{args.draft}")
     require(validate_draft(final, binding) == record and producer(args.run, args.attempt) == binding and
             all(one_asset(final, asset["name"]) == asset for asset in saved_assets), "native custody or producer raced")
+    verify_tag(binding, record)
     (args.output / "checksums.txt").write_text("".join(f"{digest(path)}  {path.name}\n" for path in archives))
     github_outputs({"tag": record["tag"], "handoff_tag": draft["tag_name"], "draft_id": args.draft})
 
