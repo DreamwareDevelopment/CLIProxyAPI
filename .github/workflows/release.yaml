@@ -5,6 +5,7 @@ on:
     # run only against tags
     tags:
       - '*'
+      - '!native-handoff-*'
 
 permissions:
   contents: write
@@ -12,16 +13,21 @@ permissions:
 env:
   GH_REPO: ${{ github.repository }}
   GO_VERSION: '1.26.4'
+  HANDOFF_TAG: native-handoff-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   prepare-release:
+    outputs:
+      models_commit: ${{ steps.native_meta.outputs.models_commit }}
+      draft_id: ${{ steps.native_meta.outputs.draft_id }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Create release
+      - name: Prepare draft custody
+        id: native_meta
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -85,11 +91,7 @@ jobs:
             cat "$changelog_notes_file"
           } > "$updated_notes_file"
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
-          else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
-          fi
+          python3 scripts/native_release.py prepare --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --notes "$updated_notes_file"
 
   build-hosted:
     name: build ${{ matrix.target }}
@@ -99,18 +101,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: darwin-amd64
-            runner: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            asset_arch: amd64
-            archive_format: tar.gz
-          - target: darwin-arm64
-            runner: macos-15
-            goos: darwin
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
           - target: windows-amd64
             runner: windows-latest
             goos: windows
@@ -123,6 +113,8 @@ jobs:
             goarch: arm64
             asset_arch: aarch64
             archive_format: zip
+    env:
+      MODELS_REPOSITORY_REF: ${{ needs.prepare-release.outputs.models_commit }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -201,36 +193,7 @@ jobs:
             printf '%s\n' "${assets[@]}" >&2
             exit 1
           fi
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
-      - name: Refresh release checksums
-        continue-on-error: true
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern 'CLIProxyAPI_*.tar.gz' \
-            --pattern 'CLIProxyAPI_*.zip' \
-            --dir "$tmp_dir" \
-            --clobber
-          (
-            cd "$tmp_dir"
-            shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
-            if [[ ${#archives[@]} -eq 0 ]]; then
-              echo "No release archives found"
-              exit 0
-            fi
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-            else
-              shasum -a 256 "${archives[@]}" | sort -k2 > checksums.txt
-            fi
-          )
-          gh release upload "$GITHUB_REF_NAME" "$tmp_dir/checksums.txt" --clobber
+          gh release upload "$HANDOFF_TAG" "${assets[@]}" --clobber
 
   build-linux-glibc:
     name: build linux-${{ matrix.goarch }} glibc
@@ -250,6 +213,8 @@ jobs:
             goarch: arm64
             asset_arch: aarch64
             manylinux_image: quay.io/pypa/manylinux2014_aarch64
+    env:
+      MODELS_REPOSITORY_REF: ${{ needs.prepare-release.outputs.models_commit }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -337,36 +302,7 @@ jobs:
             printf '%s\n' "${assets[@]}" >&2
             exit 1
           fi
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
-      - name: Refresh release checksums
-        continue-on-error: true
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern 'CLIProxyAPI_*.tar.gz' \
-            --pattern 'CLIProxyAPI_*.zip' \
-            --dir "$tmp_dir" \
-            --clobber
-          (
-            cd "$tmp_dir"
-            shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
-            if [[ ${#archives[@]} -eq 0 ]]; then
-              echo "No release archives found"
-              exit 0
-            fi
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-            else
-              shasum -a 256 "${archives[@]}" | sort -k2 > checksums.txt
-            fi
-          )
-          gh release upload "$GITHUB_REF_NAME" "$tmp_dir/checksums.txt" --clobber
+          gh release upload "$HANDOFF_TAG" "${assets[@]}" --clobber
 
   build-linux-no-plugin:
     name: build linux-${{ matrix.goarch }} no-plugin
@@ -382,6 +318,8 @@ jobs:
           - target: linux-arm64-no-plugin
             goarch: arm64
             asset_arch: aarch64
+    env:
+      MODELS_REPOSITORY_REF: ${{ needs.prepare-release.outputs.models_commit }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -456,42 +394,14 @@ jobs:
             printf '%s\n' "${assets[@]}" >&2
             exit 1
           fi
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
-      - name: Refresh release checksums
-        continue-on-error: true
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern 'CLIProxyAPI_*.tar.gz' \
-            --pattern 'CLIProxyAPI_*.zip' \
-            --dir "$tmp_dir" \
-            --clobber
-          (
-            cd "$tmp_dir"
-            shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
-            if [[ ${#archives[@]} -eq 0 ]]; then
-              echo "No release archives found"
-              exit 0
-            fi
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-            else
-              shasum -a 256 "${archives[@]}" | sort -k2 > checksums.txt
-            fi
-          )
-          gh release upload "$GITHUB_REF_NAME" "$tmp_dir/checksums.txt" --clobber
+          gh release upload "$HANDOFF_TAG" "${assets[@]}" --clobber
 
   build-freebsd:
     name: build ${{ matrix.target }}
     needs: prepare-release
     runs-on: ubuntu-latest
     env:
+      MODELS_REPOSITORY_REF: ${{ needs.prepare-release.outputs.models_commit }}
       TARGET: ${{ matrix.target }}
       TARGET_GOARCH: ${{ matrix.goarch }}
       ASSET_ARCH: ${{ matrix.asset_arch }}
@@ -657,61 +567,4 @@ jobs:
             printf '%s\n' "${assets[@]}" >&2
             exit 1
           fi
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
-      - name: Refresh release checksums
-        continue-on-error: true
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern 'CLIProxyAPI_*.tar.gz' \
-            --pattern 'CLIProxyAPI_*.zip' \
-            --dir "$tmp_dir" \
-            --clobber
-          (
-            cd "$tmp_dir"
-            shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
-            if [[ ${#archives[@]} -eq 0 ]]; then
-              echo "No release archives found"
-              exit 0
-            fi
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-            else
-              shasum -a 256 "${archives[@]}" | sort -k2 > checksums.txt
-            fi
-          )
-          gh release upload "$GITHUB_REF_NAME" "$tmp_dir/checksums.txt" --clobber
-
-  publish-checksums:
-    runs-on: ubuntu-latest
-    if: always()
-    needs:
-      - build-hosted
-      - build-linux-glibc
-      - build-linux-no-plugin
-      - build-freebsd
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Publish final checksums
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          cd dist
-          shopt -s nullglob
-          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
-          if [[ ${#archives[@]} -eq 0 ]]; then
-            echo "No release archives found"
-            exit 0
-          fi
-          sha256sum "${archives[@]}" | sort -k2 > checksums.txt
-          gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber
+          gh release upload "$HANDOFF_TAG" "${assets[@]}" --clobber

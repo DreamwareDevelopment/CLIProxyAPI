@@ -1,0 +1,413 @@
+{
+  "schema": 1,
+  "files": [
+    "scripts/native_release.py",
+    "scripts/test_native_release.py"
+  ],
+  "timeout": 30,
+  "cases": [
+    {
+      "id": "attempt_race",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(meta.get(\"id\") == run_id and meta.get(\"run_attempt\") == attempt, \"producer attempt changed\")",
+          "after": "require(True, 'producer attempt changed')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_attempt_race"
+      ]
+    },
+    {
+      "id": "fork_producer",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(meta.get(\"repository\", {}).get(\"full_name\") == REPO and\n            meta.get(\"head_repository\", {}).get(\"full_name\") == REPO, \"wrong producer repository\")",
+          "after": "require(True, 'wrong producer repository')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_fork_producer"
+      ]
+    },
+    {
+      "id": "workflow_identity",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(meta.get(\"path\") == WORKFLOW, \"wrong producer workflow\")",
+          "after": "require(True, 'wrong producer workflow')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_workflow_identity"
+      ]
+    },
+    {
+      "id": "incomplete_producer",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(meta.get(\"status\") == \"completed\" and meta.get(\"conclusion\") == \"success\", \"producer did not succeed\")",
+          "after": "require(True, 'producer did not succeed')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_incomplete_producer"
+      ]
+    },
+    {
+      "id": "duplicate_artifact",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(len(artifacts) == len(ARTIFACTS) and {a.get(\"name\") for a in artifacts} == set(ARTIFACTS),\n            \"unexpected or ambiguous producer artifact inventory\")",
+          "after": "require(True, 'unexpected or ambiguous producer artifact inventory')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_duplicate_artifact"
+      ]
+    },
+    {
+      "id": "artifact_source",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(artifact.get(\"workflow_run\", {}).get(\"id\") == run_id and\n                artifact.get(\"workflow_run\", {}).get(\"head_sha\") == meta[\"head_sha\"], \"artifact source mismatch\")",
+          "after": "require(True, 'artifact source mismatch')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_artifact_source"
+      ]
+    },
+    {
+      "id": "expired_artifact",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(type(artifact.get(\"id\")) is int and artifact[\"id\"] > 0 and not artifact.get(\"expired\", True),\n                \"invalid or expired artifact\")",
+          "after": "require(True, 'invalid or expired artifact')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_expired_artifact"
+      ]
+    },
+    {
+      "id": "missing_artifact_digest",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(isinstance(artifact.get(\"digest\"), str) and re.fullmatch(r\"sha256:[0-9a-f]{64}\", artifact[\"digest\"]), \"artifact has no server digest\")",
+          "after": "require(True, 'artifact has no server digest')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_missing_artifact_digest"
+      ]
+    },
+    {
+      "id": "default_source_move",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(current == result[\"source_sha\"], \"producer source is no longer current default source\")",
+          "after": "require(True, 'producer source is no longer current default source')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_default_source_move"
+      ]
+    },
+    {
+      "id": "published_draft",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(draft.get(\"draft\") is True and draft.get(\"target_commitish\") == binding[\"source_sha\"], \"wrong or published draft\")",
+          "after": "require(True, 'wrong or published draft')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_published_draft"
+      ]
+    },
+    {
+      "id": "receipt_author",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(asset.get(\"uploader\", {}).get(\"id\") == OPERATOR, \"native evidence lacks authenticated founder custody\")",
+          "after": "require(True, 'native evidence lacks authenticated founder custody')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_receipt_author"
+      ]
+    },
+    {
+      "id": "duplicate_evidence",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(len(matches) == 1, \"missing or ambiguous native asset: \" + name)",
+          "after": "require(True, 'missing or ambiguous native asset')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_duplicate_evidence"
+      ]
+    },
+    {
+      "id": "download_asset_digest",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(server_digest == \"sha256:\" + digest(destination), \"native evidence digest mismatch\")",
+          "after": "require(True, 'native evidence digest mismatch')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_download_asset_digest"
+      ]
+    },
+    {
+      "id": "draft_binding",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(record.get(\"schema_version\") == 1 and record.get(\"seed\") == seed and record.get(\"tag\") == tag_for(binding), \"draft producer binding mismatch\")",
+          "after": "require(True, 'draft producer binding mismatch')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_draft_binding"
+      ]
+    },
+    {
+      "id": "receipt_binding",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(receipt.get(\"binding\") == binding and receipt.get(\"draft_id\") == draft_id and receipt.get(\"arch\") == arch,\n            \"stale native receipt binding\")",
+          "after": "require(True, 'stale native receipt binding')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_receipt_binding"
+      ]
+    },
+    {
+      "id": "runtime_toolchain",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(receipt.get(\"status\") == \"success\" and runtime.get(\"system\") == \"Darwin\" and runtime.get(\"machine\") in (\"arm64\", \"x86_64\") and\n            runtime.get(\"go\", \"\").startswith(\"go version go1.26.4 darwin/\") and runtime == receipt.get(\"runtime_after\"), \"native runtime changed or missing\")",
+          "after": "require(True, 'native runtime changed or missing')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_runtime_toolchain"
+      ]
+    },
+    {
+      "id": "archive_custody",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(receipt.get(\"archive\") == expected, \"native archive custody mismatch\")",
+          "after": "require(True, 'native archive custody mismatch')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_archive_custody"
+      ]
+    },
+    {
+      "id": "model_input_closure",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(receipt.get(\"models_commit\") == record[\"models_commit\"] and set(receipt.get(\"model_inputs\", {})) == set(MODELS) and\n            all(re.fullmatch(r\"[0-9a-f]{64}\", value) for value in receipt[\"model_inputs\"].values()), \"native model input closure mismatch\")",
+          "after": "require(True, 'native model input closure mismatch')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_model_input_closure"
+      ]
+    },
+    {
+      "id": "incomplete_workload",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(receipt.get(\"commands\") == [\"pinned model catalog refresh\", \"CGO_ENABLED=1 go build ./cmd/server/\", \"native packaged cli-proxy-api -h\"], \"native workload incomplete\")",
+          "after": "require(True, 'native workload incomplete')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_incomplete_workload"
+      ]
+    },
+    {
+      "id": "log_binding",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(receipt.get(\"log\") == {\"id\": log_asset[\"id\"], \"sha256\": log_hash}, \"native log custody mismatch\")",
+          "after": "require(True, 'native log custody mismatch')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_log_binding"
+      ]
+    },
+    {
+      "id": "actual_platform_required",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(platform.system() == \"Darwin\" and platform.machine() in (\"arm64\", \"x86_64\"), \"actual native Mac executor required\")",
+          "after": "require(True, 'actual native Mac executor required')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_actual_platform_required"
+      ]
+    },
+    {
+      "id": "exact_existing_toolchain",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(version == f\"go version {GO_VERSION} darwin/{host_arch}\", \"exact existing Go 1.26.4 native toolchain required; no automatic install\")",
+          "after": "require(True, 'exact existing Go 1.26.4 native toolchain required; no automatic install')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_exact_existing_toolchain"
+      ]
+    },
+    {
+      "id": "no_rosetta_install",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(Path(\"/Library/Apple/usr/libexec/oah/libRosettaRuntime\").is_file(), \"amd64 execution unavailable; automatic Rosetta installation is forbidden\")",
+          "after": "require(True, 'amd64 execution unavailable; automatic Rosetta installation is forbidden')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_no_rosetta_install"
+      ]
+    },
+    {
+      "id": "native_arm_route",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(not (machine == \"x86_64\" and arch == \"arm64\"), \"arm64 execution needs an actual ARM Mac\")",
+          "after": "require(True, 'arm64 execution needs an actual ARM Mac')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_native_arm_route"
+      ]
+    },
+    {
+      "id": "original_archive_bytes",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(asset.get(\"digest\") == \"sha256:\" + digest(archive), \"draft non-Darwin asset differs from original producer artifact\")",
+          "after": "require(True, 'draft non-Darwin asset differs from original producer artifact')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_original_archive_bytes"
+      ]
+    },
+    {
+      "id": "native_archive_author",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(asset.get(\"uploader\", {}).get(\"id\") == OPERATOR, \"native evidence lacks authenticated founder custody\")",
+          "after": "require(True, 'native evidence lacks authenticated founder custody')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_native_archive_author"
+      ]
+    },
+    {
+      "id": "final_custody_race",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "require(validate_draft(final, binding) == record and producer(args.run, args.attempt) == binding and\n            all(one_asset(final, asset[\"name\"]) == asset for asset in saved_assets), \"native custody or producer raced\")",
+          "after": "require(True, 'native custody or producer raced')"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_final_custody_race"
+      ]
+    },
+    {
+      "id": "failed_required_job",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "len(matching) == 1 and matching[0].get(\"status\") == \"completed\" and\n                matching[0].get(\"conclusion\") == \"success\"",
+          "after": "True"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_failed_required_job"
+      ]
+    },
+    {
+      "id": "valid_controls",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "\"source_sha\": meta[\"head_sha\"],",
+          "after": "\"source_sha\": \"f\" * 40,"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_valid_controls"
+      ]
+    },
+    {
+      "id": "archive_identities",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "'aarch64' if arch == 'arm64' else 'amd64'",
+          "after": "'arm64' if arch == 'arm64' else 'amd64'"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_archive_identities"
+      ]
+    },
+    {
+      "id": "complete_checksum_inventory",
+      "edits": [
+        {
+          "path": "scripts/native_release.py",
+          "before": "write_text(\"\".join(f\"{digest(path)}  {path.name}\\n\" for path in archives))",
+          "after": "write_text(\"\")"
+        }
+      ],
+      "tests": [
+        "scripts.test_native_release.NativeReleaseTest.test_complete_checksum_inventory"
+      ]
+    }
+  ]
+}
