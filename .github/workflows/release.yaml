@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: read # bind this producer's run/attempt before drafting custody
 
 env:
   GH_REPO: ${{ github.repository }}
