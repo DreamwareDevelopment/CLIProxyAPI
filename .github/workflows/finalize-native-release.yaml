@@ -1,0 +1,62 @@
+name: Finalize native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run:
+        description: "Completed original release build run ID"
+        required: true
+        type: string
+      producer_attempt:
+        description: "Exact successful producer attempt"
+        required: true
+        type: string
+      draft_id:
+        description: "Producer-created draft custody ID"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: cliproxy-native-finalize-${{ inputs.draft_id }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.repository == 'DreamwareDevelopment/CLIProxyAPI' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify both native receipts and exact original archives
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ inputs.producer_run }}
+          PRODUCER_ATTEMPT: ${{ inputs.producer_attempt }}
+          DRAFT_ID: ${{ inputs.draft_id }}
+        run: python3 scripts/native_release.py verify --run "$PRODUCER_RUN" --attempt "$PRODUCER_ATTEMPT" --draft "$DRAFT_ID" --output dist
+      - name: Recheck custody immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ inputs.producer_run }}
+          PRODUCER_ATTEMPT: ${{ inputs.producer_attempt }}
+          DRAFT_ID: ${{ inputs.draft_id }}
+        run: |
+          python3 scripts/native_release.py verify --run "$PRODUCER_RUN" --attempt "$PRODUCER_ATTEMPT" --draft "$DRAFT_ID" --output "$RUNNER_TEMP/native-recheck" --compare dist
+          (cd dist && sha256sum -c checksums.txt)
+      - name: Publish the complete qualified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HANDOFF_TAG: ${{ steps.proof.outputs.handoff_tag }}
+          TAG: ${{ steps.proof.outputs.tag }}
+          DRAFT_ID: ${{ steps.proof.outputs.draft_id }}
+        run: |
+          set -euo pipefail
+          gh release upload "$HANDOFF_TAG" dist/checksums.txt --repo DreamwareDevelopment/CLIProxyAPI
+          gh api --method PATCH "repos/DreamwareDevelopment/CLIProxyAPI/releases/$DRAFT_ID" -F draft=false -f tag_name="$TAG" -f name="$TAG"

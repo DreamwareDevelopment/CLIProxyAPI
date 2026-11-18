@@ -30,6 +30,7 @@ auths/*
 
 # Documentation
 docs/*
+!docs/native-release.md
 !docs/management-api-v8.md
 AGENTS.md
 CLAUDE.md
@@ -67,3 +68,6 @@ docker-compose.override.yml
 
 # Local LLM Wiki vault
 .llm-wiki
+
+# Native release helper qualification
+__pycache__/
