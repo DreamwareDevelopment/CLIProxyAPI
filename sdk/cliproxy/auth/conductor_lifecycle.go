@@ -526,6 +526,10 @@ func (m *Manager) updateInternalLockedWithOptions(ctx context.Context, base, aut
 			auth.CopilotCatalog = existing.CopilotCatalog
 		}
 	}
+	if auth.Provider == existing.Provider && quotaScheduleIdentityMatches(auth, existing) &&
+		auth.QuotaResetSchedule.ObservedAt.Before(existing.QuotaResetSchedule.ObservedAt) {
+		auth.QuotaResetSchedule = existing.QuotaResetSchedule
+	}
 	if auth.Generation <= existing.Generation {
 		auth.Generation = existing.Generation + 1
 	} else {

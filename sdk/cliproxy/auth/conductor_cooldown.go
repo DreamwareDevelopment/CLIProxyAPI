@@ -1136,6 +1136,10 @@ func dedupeStrings(values []string) []string {
 
 // ResetQuota clears quota/cooldown state for an auth and resumes registry routing.
 func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []string, error) {
+	return m.resetQuota(ctx, authID, nil)
+}
+
+func (m *Manager) resetQuota(ctx context.Context, authID string, expected *Auth) (*Auth, []string, error) {
 	if m == nil {
 		return nil, nil, nil
 	}
@@ -1144,6 +1148,14 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		return nil, nil, fmt.Errorf("auth id is required")
 	}
 
+	if expected != nil {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if errContext := ctx.Err(); errContext != nil {
+			return nil, nil, errContext
+		}
+	}
 	now := time.Now()
 	var snapshot *Auth
 	models := make([]string, 0)
@@ -1157,6 +1169,18 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 	if !ok || auth == nil {
 		m.mu.Unlock()
 		return nil, nil, nil
+	}
+
+	if expected != nil {
+		if errContext := ctx.Err(); errContext != nil {
+			m.mu.Unlock()
+			return nil, nil, errContext
+		}
+		if !m.quotaResetMatchesLocked(auth, expected) {
+			m.mu.Unlock()
+			return nil, nil, nil
+		}
+		auth = auth.Clone()
 	}
 
 	var cooldownRecordsBefore []CooldownStateRecord
@@ -1202,6 +1226,23 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		cooldownStateChanged = !cooldownStateRecordsEqual(cooldownRecordsBefore, cooldownRecordsAfter)
 	}
 	errPersist := m.persistLocked(ctx, auth)
+	if expected != nil {
+		if errPersist != nil {
+			m.mu.Unlock()
+			return nil, nil, errPersist
+		}
+		if errContext := ctx.Err(); errContext != nil {
+			m.mu.Unlock()
+			return nil, nil, errContext
+		}
+		if !m.quotaResetMatchesLocked(m.auths[authID], expected) {
+			m.mu.Unlock()
+			return nil, nil, nil
+		}
+		m.auths[authID] = auth
+		snapshot = auth.Clone()
+	}
+
 	m.mu.Unlock()
 	releaseMutation()
 
@@ -2371,6 +2412,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 
 		if !result.SkipQuotaObservation {
 			auth.Quota.ObserveResponseHeadersForProvider(result.Provider, responseHeaders, now)
+			auth.QuotaResetSchedule = EffectiveQuotaResetSchedule(auth)
 			if modelState != nil {
 				modelState.Quota.ObserveResponseHeadersForProvider(result.Provider, responseHeaders, now)
 			}
