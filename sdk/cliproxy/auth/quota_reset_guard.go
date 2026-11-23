@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ func (m *Manager) ResetQuotaIfUnchanged(ctx context.Context, expected *Auth) (*A
 // attributable to quota. It neither confirms provider capacity nor mutates auth.
 func QuotaRecoveryCandidate(auth *Auth) bool {
 	if auth == nil || auth.Disabled || strings.TrimSpace(auth.ID) == "" || strings.TrimSpace(auth.Provider) == "" {
+		return false
+	}
+	if blocksAutomaticQuotaReset(auth, time.Now()) {
 		return false
 	}
 	known, safe := quotaRecoveryState(auth.Status, auth.StatusMessage, auth.Unavailable, auth.NextRetryAfter, auth.Quota, auth.LastError)
@@ -73,6 +77,52 @@ func quotaRecoveryState(status Status, message string, unavailable bool, retry t
 		}
 	}
 	return known, true
+}
+
+// A public quota diagnostic can outlive or cover independent restrictions.
+// Inspect the same retained deadlines the manager uses for routing and restore.
+func blocksAutomaticQuotaReset(a *Auth, now time.Time) bool {
+	if a.Disabled || a.Status == StatusDisabled || (a.RequiresSignIn && !a.HasValidAccessToken(now)) {
+		return true
+	}
+	if effectiveCredQuotaForceUntil(a).After(now) || effectiveAuthForceUntil(a).After(now) ||
+		a.quotaForceCooldownUntil.After(now) || a.nonQuotaCooldownUntil.After(now) ||
+		a.credentialRetryAfter.After(now) || a.nonAuthCredentialRetryAfter.After(now) {
+		return true
+	}
+	for _, model := range a.ModelStates {
+		if model == nil {
+			continue
+		}
+		if isModelStateActiveCooldown(model.credentialQuotaShadow, now) {
+			return true
+		}
+		for _, layer := range []*ModelState{model, model.credentialQuotaShadow} {
+			if layer != nil && (effectiveModelForceUntil(layer).After(now) ||
+				layer.nonQuotaCooldownUntil.After(now) || layer.quotaForceCooldownUntil.After(now)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// A store can reconcile credentials during Save. The usage reading authorizes
+// recovery only for the credential and account that produced it.
+func quotaSaveRetainsAuthority(before, after *Auth) bool {
+	if before.Provider != after.Provider || CredentialsChanged(before, after) || !quotaScheduleIdentityMatches(before, after) {
+		return false
+	}
+	for _, key := range []string{"account_uuid", "organization_uuid"} {
+		if authMetadataString(before, key) != authMetadataString(after, key) {
+			return false
+		}
+	}
+	return before.Disabled == after.Disabled && before.Status == after.Status &&
+		before.Unavailable == after.Unavailable && before.NextRetryAfter.Equal(after.NextRetryAfter) &&
+		cooldownErrorEqual(before.LastError, after.LastError) &&
+		reflect.DeepEqual(before.Quota, after.Quota) &&
+		reflect.DeepEqual(before.ModelStates, after.ModelStates) && !blocksAutomaticQuotaReset(after, time.Now())
 }
 
 // quotaResetMatchesLocked requires m.mu and the credential mutation gate.

@@ -1218,7 +1218,12 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, expected *Auth)
 			auth.Status = StatusActive
 		}
 	}
-	auth.Generation++
+	if expected == nil {
+		auth.Generation++
+	} else {
+		// A canceled staged save must leave the next live generation writable.
+		auth.Generation = expected.Generation + 1
+	}
 	auth.UpdatedAt = now
 	snapshot = auth.Clone()
 	if trackCooldownState {
@@ -1235,7 +1240,7 @@ func (m *Manager) resetQuota(ctx context.Context, authID string, expected *Auth)
 			m.mu.Unlock()
 			return nil, nil, errContext
 		}
-		if !m.quotaResetMatchesLocked(m.auths[authID], expected) {
+		if !m.quotaResetMatchesLocked(m.auths[authID], expected) || !quotaSaveRetainsAuthority(snapshot, auth) {
 			m.mu.Unlock()
 			return nil, nil, nil
 		}
